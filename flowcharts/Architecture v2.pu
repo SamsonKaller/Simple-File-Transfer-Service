@@ -1,0 +1,159 @@
+@startuml Client_v2
+
+package Client {
+    start
+    :Check for arguments (host, port, debug) and save them accordingly;
+    :Request connection to server;
+    repeat
+        :Await user command input;
+        :check command arguments for errors;
+        note left
+        This includes argument count,
+        and filename sizes under 30 chars
+        endnote
+        if (no input errors) then (true)
+            switch (match command)
+                case (bye)
+                    #LightGreen:request = 0x80 (exit);
+                case (help)
+                    #LightGreen:request = 0x60 (help);
+                case (put)
+                    :Use filename to get filename length,
+                    file contents, and file size;
+                    #LightGreen:request = opCode + FL + Filename + FS + data;
+                case (get)
+                    :Use filename to get filename length;
+                    #LightGreen:request = opCode + FL + Filename;
+                case (change)
+                    :Use old filename to get old filename length,
+                    use new filename to get new filename length;
+                    #LightGreen:request = opCode + OFL + old Filename + NFL + new Filename;
+                case (default)
+                    #LightGreen:request = 0xE0 (UNKNOWN COMMAND);
+            endswitch
+            :send request;
+            if (command == bye) then (true)
+                :close socket;
+                #LightGreen:print client exit;
+                end
+            else (false)
+            :wait to receive byte1 of response;
+            switch (match resCode (top 3 bits of byte1))
+                case (0b000 (PUT/CHANGE SUCCESS))
+                    switch (match command)
+                        case (put)
+                            #LightGreen:print file upload success;
+                        case (change)
+                            #LightGreen:print file change success;
+                    endswitch
+                case (0b001 (GET SUCCESS))
+                    :get Filename Length from byte1;
+                    :receive next 'Filename Length'
+                    bytes from socket for Filename;
+                    :receive next 4 bytes from 
+                    socket for File Size;
+                    :receive 'File Size' bytes from
+                    socket for File Data;
+                    :try to save file;
+                    if (error) then (true)
+                        #Pink:print error;
+                    else (false)
+                        #LightGreen:print success;
+                    endif
+                case (0b010 (GET FAIL))
+                    #Pink:print SERVER ERROR: File not found;
+                case (0b011 (UNKNOWN REQUEST))
+                    #Pink:print SERVER ERROR: Unknown request;
+                case (0b101 (PUT/CHANGE FAIL))
+                    #Pink:print SERVER ERROR: Command unsuccessful;
+                case (0b110 (HELP RESPONSE))
+                    :get Help Length from byte1;
+                    :receive next 'Help Length' bytes
+                    from socket for Help data;
+                    #LightGreen:print Help data;
+            endswitch
+            endif
+        else (false)
+        endif 
+    repeat while
+}
+
+@enduml
+
+@startuml Server_v2
+
+package Server {
+    start
+    :Check for arguments (port, debug) and save them accordingly;
+    repeat
+        :Listen for connection requests;
+        :Accept connection request;
+        repeat
+            :wait to receive byte1 over socket
+            over client socket;
+            switch (opCode (top 3 bits of byte1))
+                case (0b000 (PUT REQUEST))
+                    :use byte1 to get Filename
+                    Length (bottom 5 bits);
+                    :receive next 'Filename Length'
+                    bytes from socket for Filename;
+                    :receive next 4 bytes from
+                    client socket for File Size;
+                    :receive next 'File Size' bytes
+                    from client socket for file data;
+                    :save data in file;
+                    if (error) then (true)
+                        #Pink:response = 0b101
+                        (PUT FAIL);
+                    else (false)
+                        #LightGreen:response = 0b000
+                        (PUT OK);
+                    endif
+                case (0b001 (GET REQUEST))
+                    :use byte1 to get Filename
+                    Length (bottom 5 bits);
+                    :receive next 'Filename Length'
+                    bytes from socket for Filename;
+                    :try to read file, get 
+                    File Data, File Size;
+                    if (error) then (true)
+                        #Pink:response = 0b010
+                        (FILE NOT FOUND);
+                    else (false)
+                        #LightGreen:response = 0b001 + FL + Filename + FS + Data;
+                    endif
+                case (0b010 (CHANGE REQUEST))
+                    :use byte1 to get
+                    old Filename Length;
+                    :receive next 'Old Filename Lenght'
+                    bytes from socket for old Filename;
+                    :receive next byte from socket
+                    for new Filename Length;
+                    :receive 'new Filename Length' bytes
+                    from socket for new Filename;
+                    :try to rename file;
+                    if (error) then (true)
+                        #Pink:response = 0b101
+                        (CHANGE FAIL);
+                    else (false)
+                        #LightGreen:response = 0b000
+                        (CHANGE OK);
+                    endif
+                case (0b011 (HELP REQUEST))
+                    #LightGreen:response = 0b110 + Help Length + Help data;
+                case (default (UNKNOWN REQUEST))
+                    #Pink:response = 0b011
+                    (UNKNOWN REQUEST RESPONSE);
+                case (0b100 (BYE REQUEST))
+                
+                #LightBlue:(A)
+                detach
+            endswitch
+            :send response;
+        repeat while
+        #LightBlue:(A)
+        :close client socket;
+    repeat while
+}
+
+@enduml

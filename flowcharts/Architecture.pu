@@ -1,0 +1,208 @@
+@startuml Client
+
+package Client {
+    start
+    :Check for arguments (host, port, debug) and save them accordingly;
+    :Request connection to server;
+    repeat
+        #LightBlue:(A)
+        :Await user command;
+        :Check syntax;
+        note left
+            This step should be checked <b>after</b>
+            identifying which command the user input
+            ....
+            For simplicity's sake, the step was put before
+            so that it does not repeat every at every case
+        end note
+        if (good syntax?) then (yes)
+            switch (command?) 
+                case ( bye)
+                    :Send empty data to server;
+                    stop
+                case ( help)
+                    :Pad Opcode 011 with 5 trailing zeros;
+                case ( put)
+                    :Get file name;
+                    if (file exists?) then (yes)
+                        if (file name size < 32B?) then (yes)
+                            if (file size < 64KB?) then (yes)
+                                :Convert file name size to binary string (5b);
+                                :Convert file name into binary string;
+                                :Convert file size into binary string (4B);
+                                :Convert file into binary string;
+                                :Concatenate everything in respective
+                                order after Opcode 000;
+                            else (no)
+                                :Print that file size is too big;
+                                #Pink:Refuse command;
+                                #LightBlue:(A)
+                                detach
+                            endif
+                        else (no)
+                            :Print that file name is too long;
+                            #Pink:Refuse command;
+                            #LightBlue:(A)
+                            detach
+                        endif
+                    else (no)
+                        :Print that file does not exist at specified path;
+                        #Pink:Refuse command;
+                        #LightBlue:(A)
+                        detach
+                    endif
+                case ( get)
+                    :Get file name;
+                    if (file name size < 32B?) then (yes)
+                        :Convert file name size to binary string (5b);
+                        :Convert file name into binary string;
+                        :Concatenate everything in respective
+                        order after Opcode 001;
+                    else (no)
+                        :Print that file name is too long;
+                        #Pink:Refuse command;
+                        #LightBlue:(A)
+                        detach
+                    endif
+                case ( change)
+                    :Get pold file name;
+                    if (old file name < 32B?) then (yes)
+                        :Get new file name;
+                        if (new file name size < 32B?) then (yes)
+                            :Convert old file name size to binary string (5b);
+                            :Convert old file name to binary string;
+                            :Convert new file name size into binary string (000 + 5b);
+                            :Convert new file name into binary string;
+                            :Concatenate everything in respective
+                            order after Opcode 010;
+                        else (no)
+                            :Print that new file name is too long;
+                            #Pink:Refuse command;
+                            #LightBlue:(A)
+                            detach
+                        endif
+                    else (no)
+                        :Print that ols file name is too long;
+                        #Pink:Refuse command;
+                        #LightBlue:(A)
+                        detach
+                    endif
+                case ( <b>anything else</b>)
+                    :Make request a byte filled with 1's
+                    (dummy request);
+            endswitch
+        else (no)
+            :Print that syntax is incorrect for corresponding command;
+            #Pink:Refuse command;
+            #LightBlue:(A)
+            detach
+        endif
+        :Send request data to server;
+        :Await answer from server;
+        :Check first 3 bits of answer (Opcode);
+        switch (Opcode?)
+            case (000)
+                :Print that request was processes properly;
+            case (001)
+                :Check next 5 bits and save it as
+                fileNameLength (int);
+                :Check next [fileNameLength] bytes
+                and save it as fileName (string);
+                :Check next 4 bytes and save it as
+                fileSize (int);
+                :Check next [fileSize] bytes and
+                save it as a file with name [fileName];
+            case (010)
+                :Print that file was not found;
+            case (011)
+                :Print that the request is unknown;
+            case (101)
+                :Print that the name change is unsuccessful;
+            case (110)
+                :Check next 5 bits and save it as
+                dataLength (int);
+                :Check next [dataLength] bytes and save it
+                as helpData;
+                :Print helpData;
+        endswitch
+    repeat while
+}
+
+@enduml
+
+@startuml Server
+
+package Server {
+    start
+    :Check for arguments (debug) and save them accordingly;
+    repeat
+        :Listen for connection requests;
+        :Accept connection request;
+        repeat
+            :Wait until receiving data;
+            :Look at 3 first bits (Opcode);
+            if (no data?) then (yes)
+                break
+            else (no)
+                switch (Opcode?)
+                    case ( 000 (put))
+                        :Check next 5 bits and save it as
+                        fileNameLength (int);
+                        :Check next [fileNameLength] bytes
+                        and save it as fileName (string);
+                        :Check next 4 bytes and save it as
+                        fileSize (int);
+                        :Check next [fileSize] bytes and
+                        save it on host as a file with
+                        name [fileName];
+                        :Make response 00000000;
+                    case ( 001 (get))
+                        :Check next 5 bits and save it as
+                        fileNameLength (int);
+                        :Check next [fileNameLength] bytes
+                        and save it as fileName (string);
+                        if (file exists?) then (yes)
+                            :Convert file size into binary string (4B);
+                            :Convert file into binary string;
+                            :Concatenate everything in respective
+                            order after Opcode 001;
+                        else (no)
+                            #Pink:Make response 01000000;
+                        endif
+                    case ( 010 (change))
+                        :Check next 5 bits and save it as
+                        oldFileNameLength (string);
+                        :Check next [oldFileNameLength] bytes and
+                        save it as oldFileName;
+                        if (file exists?) then (yes)
+                            :Check next byte and save it as
+                            newFileNameLength (int);
+                            :Check next [newFileNameLength] bytes
+                            and save it as newFileName;
+                            :Change file name for newFileName;
+                            :Make response 00000000;
+                        else (no)
+                            #Pink:Make response 10100000;
+                        endif
+                    case ( 011 (help))
+                        :Convert helpDataLength (int) to binary (5b);
+                        note right
+                        Defined as variable inside code
+                        endnote
+                        :Convert helpData (string) to binary
+                        ([helpDataLength]B);
+                        note right
+                        Defined as variable inside code
+                        endnote
+                        :Concatenate everything in respective order
+                        after Opcode 110;
+                    case ( <b>anything else</b>)
+                        #Pink:Make response '01100000';
+                endswitch
+                :Send response;
+            endif
+        repeat while
+    repeat while
+}
+
+@enduml
